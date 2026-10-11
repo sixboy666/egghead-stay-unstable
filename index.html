@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#151a2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="EGGHEAD: STAY UNSTABLE - a 3D physics balancing challenge. Keep the unflappable egg agent on the platform.">
+<title>EGGHEAD: STAY UNSTABLE</title>
+<link rel="stylesheet" href="css/style.css">
+<script>
+/* Diagnostics only: keeps a rolling log of runtime errors so QA can read them. */
+window.__eggErrors = [];
+window.addEventListener('error', function (e) {
+  window.__eggErrors.push(String(e.message) + ' @ ' + e.filename + ':' + e.lineno);
+});
+window.addEventListener('unhandledrejection', function (e) {
+  window.__eggErrors.push('promise: ' + e.reason);
+});
+</script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ 3D CANVAS ============ -->
+  <canvas id="gl"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <div id="flash" class="flash" aria-hidden="true"></div>
+
+  <!-- ============ LOADING ============ -->
+  <div id="screenBoot" class="screen active boot">
+    <div class="boot-mark">
+      <div class="boot-egg"></div>
+      <div class="boot-title">EGGHEAD</div>
+      <div class="boot-sub">STAY UNSTABLE</div>
+      <div class="boot-bar"><div id="bootFill"></div></div>
+      <div id="bootNote" class="boot-note">Polishing the sunglasses…</div>
+    </div>
+  </div>
+
+  <!-- ============ MAIN MENU ============ -->
+  <div id="screenMenu" class="screen menu">
+    <div class="menu-scroll">
+      <header class="brand">
+        <h1 class="brand-title">EGGHEAD</h1>
+        <div class="brand-chip">STAY UNSTABLE</div>
+        <p class="brand-tag">Balance. Vibe. Regret.</p>
+      </header>
+
+      <div class="menu-stats">
+        <div class="mini-stat">
+          <span class="mini-label">BEST TIME</span>
+          <span class="mini-value" id="menuBestTime">0.0s</span>
+        </div>
+        <div class="mini-stat">
+          <span class="mini-label">BEST SCORE</span>
+          <span class="mini-value" id="menuBestScore">0</span>
+        </div>
+      </div>
+
+      <button id="btnPlay" class="btn btn-primary btn-xl">
+        <span class="btn-label">PLAY</span>
+      </button>
+
+      <button id="btnAppearanceMenu" class="btn btn-ghost">
+        <span class="btn-label">APPEARANCE</span>
+        <span class="btn-sub" id="menuUnlockCount">0/16 UNLOCKED</span>
+      </button>
+
+      <div class="toggle-row">
+        <button id="btnMusic" class="toggle on" data-kind="music">
+          <span class="toggle-dot"></span><span class="toggle-text">MUSIC ON</span>
+        </button>
+        <button id="btnSfx" class="toggle on" data-kind="sfx">
+          <span class="toggle-dot"></span><span class="toggle-text">SFX ON</span>
+        </button>
+      </div>
+
+      <div class="howto">
+        <div class="howto-title">HOW TO FLAIL</div>
+        <ul class="howto-list">
+          <li><b>DRAG</b> left / right to shift your weight under the egg.</li>
+          <li><b>TAP</b> for one dramatic FLAIL SAVE. It has a cooldown.</li>
+          <li>Survive. Every few seconds the platform gets a new stupid idea.</li>
+          <li>Rewards are cosmetic only. Your dignity is not.</li>
+        </ul>
+      </div>
+
+      <div class="menu-foot">A TINY 3D BALANCING DISASTER · v1.0.0</div>
+    </div>
+  </div>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud" class="layer">
+    <div class="hud-top">
+      <div class="stat">
+        <span class="stat-label">TIME</span>
+        <span class="stat-value" id="hudTime">0.0</span>
+      </div>
+      <div class="stat stat-mid">
+        <span class="stat-label">SCORE</span>
+        <span class="stat-value" id="hudScore">0</span>
+      </div>
+      <div class="stat stat-right">
+        <span class="stat-label">BEST</span>
+        <span class="stat-value" id="hudBest">0.0</span>
+      </div>
+      <button id="btnPause" class="icon-btn" aria-label="Pause">
+        <span class="pause-glyph"></span>
+      </button>
+    </div>
+
+    <div class="danger-track" id="dangerTrack">
+      <div class="danger-mid"></div>
+      <div class="danger-fill" id="dangerFill"></div>
+    </div>
+
+    <div id="hazardToast" class="toast">
+      <span class="toast-kicker">NEW HAZARD</span>
+      <span class="toast-name" id="hazardName">MINI FANS</span>
+    </div>
+
+    <div id="saveBadge" class="save-badge">FLAIL SAVE! <b>+25</b></div>
+
+    <div class="hud-bottom">
+      <div class="hint" id="hint">DRAG TO SHIFT WEIGHT · TAP TO FLAIL-SAVE</div>
+      <div class="save-meter" id="saveMeter"><div class="save-meter-fill" id="saveMeterFill"></div></div>
+    </div>
+  </div>
+
+  <!-- ============ PAUSE ============ -->
+  <div id="screenPause" class="screen overlay">
+    <div class="panel panel-sm">
+      <h2 class="panel-title">PAUSED</h2>
+      <div class="pause-stats">
+        <div class="mini-stat">
+          <span class="mini-label">THIS RUN</span>
+          <span class="mini-value" id="pauseTime">0.0s</span>
+        </div>
+        <div class="mini-stat">
+          <span class="mini-label">SCORE</span>
+          <span class="mini-value" id="pauseScore">0</span>
+        </div>
+      </div>
+      <button id="btnResume" class="btn btn-primary"><span class="btn-label">RESUME</span></button>
+      <button id="btnRestartPause" class="btn btn-ghost"><span class="btn-label">RESTART</span></button>
+      <div class="toggle-row">
+        <button id="btnMusic2" class="toggle on" data-kind="music">
+          <span class="toggle-dot"></span><span class="toggle-text">MUSIC ON</span>
+        </button>
+        <button id="btnSfx2" class="toggle on" data-kind="sfx">
+          <span class="toggle-dot"></span><span class="toggle-text">SFX ON</span>
+        </button>
+      </div>
+      <button id="btnMenuPause" class="btn btn-text"><span class="btn-label">QUIT TO MENU</span></button>
+    </div>
+  </div>
+
+  <!-- ============ RESULTS ============ -->
+  <div id="screenOver" class="screen overlay">
+    <div class="panel">
+      <div class="results-head">
+        <h2 class="panel-title" id="overTitle">RUN OVER</h2>
+        <div class="record-badge" id="overRecord">NEW RECORD</div>
+      </div>
+
+      <div class="result-grid">
+        <div class="result-cell">
+          <span class="result-label">SURVIVED</span>
+          <span class="result-value" id="overTime">0.0s</span>
+        </div>
+        <div class="result-cell">
+          <span class="result-label">SCORE</span>
+          <span class="result-value" id="overScore">0</span>
+        </div>
+        <div class="result-cell">
+          <span class="result-label">BEST TIME</span>
+          <span class="result-value dim" id="overBestTime">0.0s</span>
+        </div>
+        <div class="result-cell">
+          <span class="result-label">BEST SCORE</span>
+          <span class="result-value dim" id="overBestScore">0</span>
+        </div>
+      </div>
+
+      <div class="blunder">
+        <span class="blunder-label">MOST ABSURD MISTAKE</span>
+        <span class="blunder-value" id="overBlunder">—</span>
+      </div>
+
+      <div class="next-unlock" id="nextUnlockBox">
+        <div class="next-row">
+          <span class="next-label">NEXT UNLOCK</span>
+          <span class="next-name" id="nextUnlockName">COBALT SUIT</span>
+        </div>
+        <div class="next-track"><div class="next-fill" id="nextUnlockFill"></div></div>
+        <div class="next-gap" id="nextUnlockGap">4.2s TO GO</div>
+      </div>
+      <div class="all-unlocked hidden" id="allUnlockedBox">EVERYTHING UNLOCKED. YOU ABSOLUTE LEGEND.</div>
+
+      <button id="btnRetry" class="btn btn-primary btn-xl"><span class="btn-label">RETRY</span></button>
+      <div class="btn-row">
+        <button id="btnAppearanceOver" class="btn btn-ghost"><span class="btn-label">APPEARANCE</span></button>
+        <button id="btnMenuOver" class="btn btn-ghost"><span class="btn-label">MENU</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ APPEARANCE ============ -->
+  <div id="screenAppearance" class="screen overlay">
+    <div class="panel panel-tall">
+      <div class="wardrobe-head">
+        <h2 class="panel-title">APPEARANCE</h2>
+        <div class="wardrobe-sub">COSMETIC ONLY · NO STAT CHANGES</div>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="suits">SUITS</button>
+        <button class="tab" data-tab="shades">SHADES</button>
+        <button class="tab" data-tab="poses">POSES</button>
+      </div>
+      <div class="grid" id="wardrobeGrid"></div>
+      <button id="btnAppearanceBack" class="btn btn-primary"><span class="btn-label">BACK</span></button>
+    </div>
+  </div>
+
+  <div id="rotateNote" class="rotate-note">ROTATE YOUR DEVICE TO PORTRAIT</div>
+</div>
+
+<script src="js/three.min.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/character.js"></script>
+<script src="js/world.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
