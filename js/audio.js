@@ -34,6 +34,8 @@
     _intensity: 0,
     _playing: false,
     _bpm: 116,
+    _mood: 'play',
+    _maxIntensity: 6,
 
     init: function () {
       if (this.ready) return;
@@ -54,10 +56,23 @@
 
       this.musicBus = ctx.createGain();
       this.musicBus.gain.value = this.musicOn ? 0.42 : 0;
+      // sidechain pump: the kick briefly dips the whole music bed
+      this._musPump = ctx.createGain();
+      this._musPump.gain.value = 1;
+
       this.sfxBus = ctx.createGain();
       this.sfxBus.gain.value = this.sfxOn ? 0.72 : 0;
 
-      this.musicBus.connect(comp);
+      // plate-style reverb send (procedural impulse response, no files)
+      this.revBus = ctx.createGain();
+      this.revBus.gain.value = 0.9;
+      var conv = ctx.createConvolver();
+      conv.buffer = this._makeIR(1.7, 2.6);
+      this.revBus.connect(conv);
+      conv.connect(comp);
+
+      this.musicBus.connect(this._musPump);
+      this._musPump.connect(comp);
       this.sfxBus.connect(comp);
       comp.connect(this.master);
       this.master.connect(ctx.destination);
@@ -65,6 +80,31 @@
       this._buildDangerTone();
       this._buildWind();
       this.ready = true;
+    },
+
+    /* ---------------------------------------------------------
+       procedural impulse response: stereo noise with an
+       exponential decay — a small, bright plate reverb
+       --------------------------------------------------------- */
+    _makeIR: function (seconds, decay) {
+      var ctx = this.ctx;
+      var len = Math.floor(ctx.sampleRate * seconds);
+      var buf = ctx.createBuffer(2, len, ctx.sampleRate);
+      for (var ch = 0; ch < 2; ch++) {
+        var d = buf.getChannelData(ch);
+        for (var i = 0; i < len; i++) {
+          d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+        }
+      }
+      return buf;
+    },
+
+    /* smooth parameter fade (no clicks when toggling music) */
+    _fade: function (param, target, sec) {
+      var t = this.ctx.currentTime;
+      param.cancelScheduledValues(t);
+      param.setValueAtTime(param.value, t);
+      param.linearRampToValueAtTime(target, t + sec);
     },
 
     unlock: function () {
@@ -117,6 +157,12 @@
       }
       node.connect(g);
       g.connect(o.bus === 'music' ? this.musicBus : this.sfxBus);
+      if (o.rev) {
+        var rs = ctx.createGain();
+        rs.gain.value = o.rev;
+        g.connect(rs);
+        rs.connect(this.revBus);
+      }
       osc.start(t0);
       osc.stop(t0 + o.dur + 0.03);
     },
@@ -140,6 +186,12 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + o.dur);
       src.connect(f); f.connect(g);
       g.connect(o.bus === 'music' ? this.musicBus : this.sfxBus);
+      if (o.rev) {
+        var rs = ctx.createGain();
+        rs.gain.value = o.rev;
+        g.connect(rs);
+        rs.connect(this.revBus);
+      }
       src.start(t0);
       src.stop(t0 + o.dur + 0.02);
     },
@@ -227,23 +279,23 @@
           this._tone({ type: 'square', f0: 620, f1: 400, dur: 0.08, gain: 0.14 });
           break;
         case 'start':
-          this._tone({ type: 'triangle', f0: NOTE(-5), dur: 0.14, gain: 0.3 });
-          this._tone({ type: 'triangle', f0: NOTE(2), dur: 0.16, gain: 0.28, delay: 0.09 });
-          this._tone({ type: 'triangle', f0: NOTE(7), dur: 0.3, gain: 0.26, delay: 0.18 });
+          this._tone({ type: 'triangle', f0: NOTE(-5), dur: 0.14, gain: 0.3, rev: 0.25 });
+          this._tone({ type: 'triangle', f0: NOTE(2), dur: 0.16, gain: 0.28, delay: 0.09, rev: 0.25 });
+          this._tone({ type: 'triangle', f0: NOTE(7), dur: 0.3, gain: 0.26, delay: 0.18, rev: 0.3 });
           break;
         case 'save': {
           var base = opt.pitch || 0;
-          this._tone({ type: 'triangle', f0: NOTE(base), f1: NOTE(base), dur: 0.10, gain: 0.3 });
-          this._tone({ type: 'triangle', f0: NOTE(base + 4), dur: 0.10, gain: 0.3, delay: 0.07 });
-          this._tone({ type: 'triangle', f0: NOTE(base + 9), dur: 0.16, gain: 0.32, delay: 0.14 });
-          this._tone({ type: 'sawtooth', f0: NOTE(base + 12), f1: NOTE(base + 16), dur: 0.3, gain: 0.12, delay: 0.14, filter: 'bandpass', fc: 2200, q: 2 });
+          this._tone({ type: 'triangle', f0: NOTE(base), f1: NOTE(base), dur: 0.10, gain: 0.3, rev: 0.25 });
+          this._tone({ type: 'triangle', f0: NOTE(base + 4), dur: 0.10, gain: 0.3, delay: 0.07, rev: 0.25 });
+          this._tone({ type: 'triangle', f0: NOTE(base + 9), dur: 0.16, gain: 0.32, delay: 0.14, rev: 0.3 });
+          this._tone({ type: 'sawtooth', f0: NOTE(base + 12), f1: NOTE(base + 16), dur: 0.3, gain: 0.12, delay: 0.14, filter: 'bandpass', fc: 2200, q: 2, rev: 0.35 });
           this._noiseHit({ filter: 'highpass', fc: 900, fc1: 5200, dur: 0.22, gain: 0.14 });
           break;
         }
         case 'fail':
-          this._tone({ type: 'sawtooth', f0: 190, f1: 38, dur: 0.9, gain: 0.4, filter: 'lowpass', fc: 900, fc1: 160, q: 4 });
+          this._tone({ type: 'sawtooth', f0: 190, f1: 38, dur: 0.9, gain: 0.4, filter: 'lowpass', fc: 900, fc1: 160, q: 4, rev: 0.3 });
           this._tone({ type: 'sine', f0: 120, f1: 30, dur: 1.05, gain: 0.42 });
-          this._noiseHit({ filter: 'lowpass', fc: 900, fc1: 120, dur: 0.5, gain: 0.26 });
+          this._noiseHit({ filter: 'lowpass', fc: 900, fc1: 120, dur: 0.5, gain: 0.26, rev: 0.25 });
           this._tone({ type: 'square', f0: 420, f1: 90, dur: 0.32, gain: 0.1, delay: 0.34 });
           break;
         case 'bounce':
@@ -265,17 +317,17 @@
           break;
         case 'unlock':
           [0, 4, 7, 12, 16].forEach(function (s, i) {
-            this._tone({ type: 'triangle', f0: NOTE(s + 3), dur: 0.2, gain: 0.26, delay: i * 0.075 });
+            this._tone({ type: 'triangle', f0: NOTE(s + 3), dur: 0.2, gain: 0.26, delay: i * 0.075, rev: 0.35 });
           }, this);
-          this._noiseHit({ filter: 'highpass', fc: 2500, dur: 0.5, gain: 0.1 });
+          this._noiseHit({ filter: 'highpass', fc: 2500, dur: 0.5, gain: 0.1, rev: 0.3 });
           break;
         case 'milestone':
-          this._tone({ type: 'triangle', f0: NOTE(12), dur: 0.1, gain: 0.22 });
-          this._tone({ type: 'triangle', f0: NOTE(19), dur: 0.18, gain: 0.2, delay: 0.08 });
+          this._tone({ type: 'triangle', f0: NOTE(12), dur: 0.1, gain: 0.22, rev: 0.3 });
+          this._tone({ type: 'triangle', f0: NOTE(19), dur: 0.18, gain: 0.2, delay: 0.08, rev: 0.3 });
           break;
         case 'record':
           [12, 16, 19, 24].forEach(function (s, i) {
-            this._tone({ type: 'square', f0: NOTE(s), dur: 0.16, gain: 0.16, delay: i * 0.08 });
+            this._tone({ type: 'square', f0: NOTE(s), dur: 0.16, gain: 0.16, delay: i * 0.08, rev: 0.3 });
           }, this);
           break;
         case 'tick':
@@ -285,10 +337,20 @@
     },
 
     /* ---------------------------------------------------------
-       music — a minimal looping groove that layers up
+       music — a layered groove: bass + sub, hats, kick, clap,
+       pad chords, melody hook and synth stabs. Intensity layers
+       elements in; mood swaps tempo and caps intensity.
        --------------------------------------------------------- */
+    setMood: function (m) {
+      if (m === this._mood) return;
+      this._mood = m;
+      if (m === 'menu') { this._bpm = 96; this._maxIntensity = 2; }
+      else { this._bpm = 118; this._maxIntensity = 6; }
+      this._intensity = Math.min(this._intensity, this._maxIntensity);
+    },
+
     setIntensity: function (v) {
-      this._intensity = Math.max(0, Math.min(6, Math.round(v)));
+      this._intensity = Math.max(0, Math.min(this._maxIntensity, Math.round(v)));
     },
 
     startMusic: function () {
@@ -297,7 +359,7 @@
       this._playing = true;
       this._step = 0;
       this._nextNoteTime = this.ctx.currentTime + 0.08;
-      this.musicBus.gain.value = 0.42;
+      this._fade(this.musicBus.gain, 0.42, 0.6);
       if (this._timer) clearInterval(this._timer);
       var self = this;
       this._timer = setInterval(function () { self._scheduler(); }, 25);
@@ -306,16 +368,16 @@
     stopMusic: function () {
       this._playing = false;
       if (this._timer) { clearInterval(this._timer); this._timer = null; }
-      if (this.ready) this.musicBus.gain.value = 0.0001;
+      if (this.ready) this._fade(this.musicBus.gain, 0.0001, 0.4);
     },
 
     setMusicOn: function (on) {
       this.musicOn = !!on;
       if (!this.ready) return;
       if (this.musicOn) {
-        if (this._playing) this.musicBus.gain.value = 0.42;
+        if (this._playing) this._fade(this.musicBus.gain, 0.42, 0.3);
       } else {
-        this.musicBus.gain.value = 0.0001;
+        this._fade(this.musicBus.gain, 0.0001, 0.25);
       }
     },
 
@@ -348,12 +410,17 @@
 
       // roots / bassline (always present)
       var roots = [0, 0, -5, -5, -3, -3, -7, -7];
-      var root = roots[(bar * 2 + Math.floor(s16 / 4)) % roots.length];
+      var ri = (bar * 2 + Math.floor(s16 / 4)) % roots.length;
+      var root = roots[ri];
       if (s16 % 4 === 0 || (I >= 2 && s16 % 4 === 2)) {
         this._tone(this._m({
           type: 'triangle', f0: NOTE(root + 12), f1: NOTE(root + 12),
           dur: 0.22, gain: 0.30, delay: delay
         }));
+      }
+      // sub bass: warm low foundation once the groove kicks in
+      if (I >= 2 && (s16 === 0 || s16 === 8)) {
+        this._tone(this._m({ type: 'sine', f0: NOTE(root), dur: 0.5, gain: 0.20, delay: delay }));
       }
       if (I >= 1 && s16 % 4 === 2) {
         this._tone(this._m({ type: 'sine', f0: NOTE(root + 24), dur: 0.14, gain: 0.16, delay: delay }));
@@ -366,35 +433,58 @@
           delay: delay, rate: 1.4
         }));
       }
-      // kick
+      // kick (also pumps the whole music bed, sidechain-style)
       if (I >= 1 && (s16 === 0 || s16 === 6 || s16 === 10)) {
         this._tone(this._m({ type: 'sine', f0: 130, f1: 42, dur: 0.18, gain: 0.4, delay: delay }));
+        var pg = this._musPump.gain;
+        pg.cancelScheduledValues(t);
+        pg.setValueAtTime(0.76, t);
+        pg.linearRampToValueAtTime(1, t + 0.16);
       }
       // clap / snare
       if (I >= 2 && (s16 === 4 || s16 === 12)) {
-        this._noiseHit(this._m({ filter: 'bandpass', fc: 1900, q: 0.9, dur: 0.13, gain: 0.16, delay: delay }));
+        this._noiseHit(this._m({ filter: 'bandpass', fc: 1900, q: 0.9, dur: 0.13, gain: 0.16, delay: delay, rev: 0.18 }));
       }
-      // arpeggio
-      if (I >= 2 && s16 % 2 === 1) {
-        var arp = [0, 4, 7, 11, 14, 11, 7, 4];
-        var n = arp[(step * 3) % arp.length];
+      // pad chords: minor triad, slow attack, drenched in reverb
+      if (I >= 1 && (s16 === 0 || s16 === 8)) {
+        var proot = roots[(bar * 2 + (s16 >= 8 ? 1 : 0)) % roots.length];
+        var chord = [0, 3, 7];
+        for (var ci = 0; ci < chord.length; ci++) {
+          this._tone(this._m({
+            type: 'sawtooth', f0: NOTE(proot + chord[ci] + 12), dur: 1.0,
+            gain: 0.05 + I * 0.011, atk: 0.34, delay: delay,
+            filter: 'lowpass', fc: 680 + I * 240, q: 0.8, rev: 0.5
+          }));
+        }
+      }
+      // melody hook: pentatonic motif, echo tail at higher intensity
+      if (I >= 3 && (s16 === 2 || s16 === 5 || s16 === 8 || s16 === 11 || s16 === 14)) {
+        var pent = [0, 3, 5, 7, 10];
+        var mi = (step * 5 + bar * 3) % 5;
+        var mn = root + pent[mi] + 24;
         this._tone(this._m({
-          type: 'square', f0: NOTE(root + n + 24), dur: 0.09,
-          gain: 0.075, delay: delay, filter: 'lowpass', fc: 3600, q: 2
+          type: 'triangle', f0: NOTE(mn), dur: 0.12, gain: 0.085, delay: delay,
+          filter: 'lowpass', fc: 5200, rev: 0.45
         }));
+        if (I >= 4) {
+          this._tone(this._m({
+            type: 'triangle', f0: NOTE(mn), dur: 0.10, gain: 0.034, delay: delay + 60 / this._bpm / 4,
+            filter: 'lowpass', fc: 3200, rev: 0.5
+          }));
+        }
       }
       // absurd synth stabs at high intensity
       if (I >= 3 && (s16 === 3 || s16 === 11)) {
         this._tone(this._m({
           type: 'sawtooth', f0: NOTE(root + 19 + (I >= 4 ? 3 : 0)), f1: NOTE(root + 26),
-          dur: 0.22, gain: 0.10, delay: delay, filter: 'bandpass', fc: 1800, fc1: 5200, q: 3
+          dur: 0.22, gain: 0.10, delay: delay, filter: 'bandpass', fc: 1800, fc1: 5200, q: 3, rev: 0.3
         }));
       }
       if (I >= 4 && s16 === 15) {
-        this._tone(this._m({ type: 'square', f0: NOTE(root + 31), f1: NOTE(root + 24), dur: 0.1, gain: 0.07, delay: delay }));
+        this._tone(this._m({ type: 'square', f0: NOTE(root + 31), f1: NOTE(root + 24), dur: 0.1, gain: 0.07, delay: delay, rev: 0.25 }));
       }
       if (I >= 5 && s16 === 7) {
-        this._noiseHit(this._m({ filter: 'bandpass', fc: 4000, fc1: 900, dur: 0.3, gain: 0.1, delay: delay }));
+        this._noiseHit(this._m({ filter: 'bandpass', fc: 4000, fc1: 900, dur: 0.3, gain: 0.1, delay: delay, rev: 0.3 }));
       }
     },
 
