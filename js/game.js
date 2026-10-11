@@ -237,16 +237,17 @@
     var key = new T.DirectionalLight(0xfff1da, 1.25);
     key.position.set(4.2, 8.5, 5.2);
     key.castShadow = true;
-    key.shadow.mapSize.width = 1024;
-    key.shadow.mapSize.height = 1024;
-    key.shadow.camera.near = 1;
-    key.shadow.camera.far = 26;
-    key.shadow.camera.left = -4.2;
-    key.shadow.camera.right = 4.2;
-    key.shadow.camera.top = 4.6;
-    key.shadow.camera.bottom = -3.0;
-    key.shadow.bias = -0.0009;
-    key.shadow.normalBias = 0.022;
+    // tight frustum around the deck = crisp character shadow
+    key.shadow.mapSize.width = 2048;
+    key.shadow.mapSize.height = 2048;
+    key.shadow.camera.near = 4;
+    key.shadow.camera.far = 20;
+    key.shadow.camera.left = -2.7;
+    key.shadow.camera.right = 2.7;
+    key.shadow.camera.top = 3.0;
+    key.shadow.camera.bottom = -2.4;
+    key.shadow.bias = -0.0006;
+    key.shadow.normalBias = 0.02;
     scene.add(key);
 
     var rim = new T.DirectionalLight(0x92b8ff, 0.42);
@@ -257,11 +258,12 @@
 
     /* world */
     world = window.EggWorld.create(scene);
-    world.onHop = function () { A.sfx('bounce'); addShake(0.10); };
+    world.onHop = function () { A.sfx('bounce'); addShake(0.10); if (char) char.stretch(0.85); world.pulseRim(0.7); };
     world.onLand = function (power) {
       A.sfx('thud');
       addShake(0.16 * power);
-      if (char) char.joltGlasses(-0.5 * power);
+      if (char) { char.joltGlasses(-0.5 * power); char.squash(Math.min(1, power)); }
+      world.pulseRim(0.35 * power);
       fxRing(new T.Vector3(worldPlatformX(), SURFACE_Y + 0.02, 0), 0xd8e4ff, 2.2, 0.45);
     };
 
@@ -567,6 +569,7 @@
     A.setIntensity(0);
     addShake(0.5);
     flash();
+    slowT = 0.5; // brief dramatic slow-mo on the tumble
 
     // detach from the deck so the tumble is genuinely free
     var wp = new T.Vector3();
@@ -810,8 +813,11 @@
 
     char.contactShadow.position.set(G.sx, 0, G.sz);
     var sh = Math.max(0.35, 1 - G.danger * 0.35);
-    char.contactShadow.scale.setScalar(sh);
-    char.contactShadow.material.opacity = 0.9 * sh;
+    var air = Math.max(0, world.kin.bounceY());
+    var airK = Math.min(1, air / 2.4);
+    // airborne: the blob spreads out and fades like a real drop shadow
+    char.contactShadow.scale.setScalar(sh * (1 + air * 0.42));
+    char.contactShadow.material.opacity = 0.9 * sh * (1 - airK * 0.72);
 
     char.update({
       dt: dt,
@@ -820,8 +826,8 @@
       leanVel: G.leanVel,
       danger: G.danger,
       slideZ: G.sz,
-      grounded: true,
-      airTime: world.kin.bounceY() > 0.02 ? 0.1 : 0,
+      grounded: air < 0.04,
+      airTime: air > 0.04 ? Math.min(1.2, air * 0.5) : 0,
       saveT: G.saveT
     });
 
@@ -904,6 +910,7 @@
 
   function startRun() {
     A.unlock();
+    A.setMood('play');
     A.sfx('start');
     A.startMusic();
     A.setIntensity(0);
@@ -922,6 +929,8 @@
     A.silence();
     G.mode = 'menu';
     resetRun();
+    A.setMood('menu');
+    A.startMusic();
     char.setPose(save.pose, 2.2);
     char.setState('confident');
     setScreen('menu');
@@ -933,6 +942,7 @@
     G.mode = 'paused';
     el.pauseTime.textContent = G.time.toFixed(1) + 's';
     el.pauseScore.textContent = Math.floor(G.score);
+    A.stopMusic();
     A.silence();
     setScreen('pause');
   }
@@ -941,6 +951,7 @@
     if (G.mode !== 'paused') return;
     G.mode = 'playing';
     setScreen('playing');
+    A.setMood('play');
     A.startMusic();
   }
 
@@ -1067,7 +1078,7 @@
     A.unlock();
     save.music = !save.music;
     A.setMusicOn(save.music);
-    if (save.music && (G.mode === 'playing')) A.startMusic();
+    if (save.music && (G.mode === 'playing' || G.mode === 'menu')) A.startMusic();
     persist(); syncToggles(); A.sfx('click');
   }
   function toggleSfx() {
@@ -1215,14 +1226,16 @@
 
     /* close-call slow motion: everything sim-side eases to ~0.4x and back */
     var ts = 1;
-    if (G.mode === 'playing' && slowT > 0) {
+    if ((G.mode === 'playing' || G.mode === 'falling') && slowT > 0) {
       slowT -= dt;
       ts = 0.4 + 0.6 * (1 - Math.max(0, slowT) / SLOW_DUR);
     }
     var sdt = dt * ts;
 
     var worldTime = (G.mode === 'playing' || G.mode === 'paused') ? G.time : clock.elapsed;
-    if (G.mode !== 'paused') world.update(G.mode === 'playing' ? sdt : dt, worldTime);
+    if (G.mode !== 'paused') {
+      world.update((G.mode === 'playing' || G.mode === 'falling') ? sdt : dt, worldTime);
+    }
 
     switch (G.mode) {
       case 'boot':
@@ -1237,11 +1250,11 @@
       case 'paused':
         break;
       case 'falling':
-        G.stateT += dt;
+        G.stateT += sdt;
         char.setState('fall');
-        char.update({ dt: dt, state: 'fall', lean: 0, leanVel: G.leanVel, danger: 0, grounded: false, airTime: G.stateT });
-        char.parts.tilt.rotation.z += (0 - char.parts.tilt.rotation.z) * Math.min(1, dt * 2);
-        updateFall(dt);
+        char.update({ dt: sdt, state: 'fall', lean: 0, leanVel: G.leanVel, danger: 0, grounded: false, airTime: G.stateT });
+        char.parts.tilt.rotation.z += (0 - char.parts.tilt.rotation.z) * Math.min(1, sdt * 2);
+        updateFall(sdt);
         applyLook();
         break;
       case 'over':
@@ -1250,7 +1263,7 @@
         break;
     }
 
-    updateFX(dt);
+    updateFX(sdt);
     updateCamera(dt);
     A.update();
 
@@ -1377,6 +1390,7 @@
     },
     start: function () { startRun(); },
     pause: function () { pauseRun(); },
+    resume: function () { resumeRun(); },
     menu: function () { goMenu(); },
     save: function () { return trySave(); },
     forceFail: function (reason) { if (G.mode === 'playing') fail(reason || 'QA FORCE FAIL'); },
