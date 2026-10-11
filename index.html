@@ -46,7 +46,7 @@ window.addEventListener('unhandledrejection', function (e) {
       <header class="brand">
         <h1 class="brand-title">EGGHEAD</h1>
         <div class="brand-chip">STAY UNSTABLE</div>
-        <p class="brand-tag">Balance. Vibe. Regret.</p>
+        <p class="brand-tag" id="brandTag">Balance. Vibe. Regret.</p>
       </header>
 
       <div class="menu-stats">
@@ -80,15 +80,21 @@ window.addEventListener('unhandledrejection', function (e) {
 
       <div class="howto">
         <div class="howto-title">HOW TO FLAIL</div>
-        <ul class="howto-list">
+        <ul class="howto-list howto-touch">
           <li><b>DRAG</b> left / right to shift your weight under the egg.</li>
           <li><b>TAP</b> for one dramatic FLAIL SAVE. It has a cooldown.</li>
           <li>Survive. Every few seconds the platform gets a new stupid idea.</li>
           <li>Rewards are cosmetic only. Your dignity is not.</li>
         </ul>
+        <ul class="howto-list howto-desktop">
+          <li><b>HOLD A / D</b> or the arrow keys to shift your weight.</li>
+          <li><b>SPACE</b> for one dramatic FLAIL SAVE. <b>P</b> pauses.</li>
+          <li>Survive. Every few seconds the platform gets a new stupid idea.</li>
+          <li>Rewards are cosmetic only. Your dignity is not.</li>
+        </ul>
       </div>
 
-      <div class="menu-foot">A TINY 3D BALANCING DISASTER · v1.0.0</div>
+      <div class="menu-foot">A TINY 3D BALANCING DISASTER · v1.1.0</div>
     </div>
   </div>
 
@@ -166,6 +172,11 @@ window.addEventListener('unhandledrejection', function (e) {
         <div class="record-badge" id="overRecord">NEW RECORD</div>
       </div>
 
+      <div class="rank-row">
+        <div class="rank-chip" id="overRank">SCRAMBLED</div>
+        <div class="close-count" id="overClose">CLOSE CALLS ×0</div>
+      </div>
+
       <div class="result-grid">
         <div class="result-cell">
           <span class="result-label">SURVIVED</span>
@@ -188,6 +199,10 @@ window.addEventListener('unhandledrejection', function (e) {
       <div class="blunder">
         <span class="blunder-label">MOST ABSURD MISTAKE</span>
         <span class="blunder-value" id="overBlunder">—</span>
+      </div>
+      <div class="blunder blunder-excuse">
+        <span class="blunder-label">OFFICIAL EGG-SCUSE</span>
+        <span class="blunder-value" id="overExcuse">—</span>
       </div>
 
       <div class="next-unlock" id="nextUnlockBox">
