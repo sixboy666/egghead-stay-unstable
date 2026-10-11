@@ -349,7 +349,8 @@
       gustPhase: 0,
       windPower: 0,
       windDir: 1,
-      chaos: 0
+      chaos: 0,
+      rimBoost: 0
     };
 
     var api = {
@@ -488,6 +489,10 @@
           springBase.position.y = -1.62 - Math.max(0, S.bounceY * 0.35);
         }
 
+        /* --- neon rim pulse: bright on hop/land, quick decay --- */
+        S.rimBoost *= Math.exp(-dt * 5.5);
+        rim.material.emissiveIntensity = 0.38 + S.rimBoost * 1.5;
+
         /* --- integrate the tilt spring --- */
         var tiltPrev = S.tilt;
         S.tilt += S.tiltVel * dt;
@@ -533,6 +538,11 @@
         obj.position.copy(platform.position);
         obj.rotation.copy(platform.rotation);
         obj.updateMatrixWorld(true);
+      },
+
+      /* flash the neon rim (hops and landings) */
+      pulseRim: function (k) {
+        S.rimBoost = Math.min(1.3, S.rimBoost + (k || 0));
       },
 
       onHop: null,
