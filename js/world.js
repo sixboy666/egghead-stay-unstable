@@ -32,9 +32,9 @@
     var m = new T.ShaderMaterial({
       side: T.BackSide, depthWrite: false, fog: false,
       uniforms: {
-        top: { value: new T.Color(0x2a3160) },
-        mid: { value: new T.Color(0x39406e) },
-        bot: { value: new T.Color(0x141a33) }
+        top: { value: new T.Color(0x323c7c) },
+        mid: { value: new T.Color(0x414a8c) },
+        bot: { value: new T.Color(0x1a2142) }
       },
       vertexShader: [
         'varying vec3 vP;',
@@ -105,6 +105,41 @@
     });
   }
 
+  /* soft radial sprite texture (used for the sun glow and the deck pad) */
+  function glowTexture(rgb) {
+    var c = document.createElement('canvas');
+    c.width = c.height = 128;
+    var ctx = c.getContext('2d');
+    var g = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+    g.addColorStop(0, 'rgba(' + rgb + ',0.95)');
+    g.addColorStop(0.55, 'rgba(' + rgb + ',0.34)');
+    g.addColorStop(1, 'rgba(' + rgb + ',0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    return new T.CanvasTexture(c);
+  }
+
+  /* a tiny floating island: grass cap, rock cone, optional tree */
+  function island(rx) {
+    var g = new T.Group();
+    var grass = new T.Mesh(new T.CylinderGeometry(rx, rx * 0.94, rx * 0.42, 16), mat(0x4c8f6e, 0.88, 0.02));
+    g.add(grass);
+    var rock = new T.Mesh(new T.ConeGeometry(rx * 0.96, rx * 1.5, 16), mat(0x2b3145, 0.9, 0.03));
+    rock.rotation.x = Math.PI;
+    rock.position.y = -(rx * 0.42) / 2 - rx * 0.75;
+    g.add(rock);
+    if (Math.random() > 0.4) {
+      var trunk = new T.Mesh(new T.CylinderGeometry(0.035, 0.05, rx * 0.5, 8), mat(0x5a4636, 0.9, 0.02));
+      trunk.position.set(rx * 0.18, rx * 0.42 + rx * 0.25, 0);
+      g.add(trunk);
+      var crown = new T.Mesh(new T.SphereGeometry(rx * 0.3, 10, 8), mat(0x5aa87c, 0.85, 0.02));
+      crown.position.set(rx * 0.18, rx * 0.42 + rx * 0.55, 0);
+      crown.scale.y = 1.25;
+      g.add(crown);
+    }
+    return g;
+  }
+
   /* ========================================================= */
   function create(scene) {
     var group = new T.Group();
@@ -115,9 +150,46 @@
     bg.position.y = 4;
     scene.add(bg);
 
+    /* ---------- sun glow + starfield ---------- */
+    var sun = new T.Sprite(new T.SpriteMaterial({
+      map: glowTexture('255,232,180'), transparent: true, opacity: 0.92, depthWrite: false, fog: false
+    }));
+    sun.scale.set(10, 10, 1);
+    sun.position.set(-14, 9, -28);
+    scene.add(sun);
+
+    var sunCore = new T.Sprite(new T.SpriteMaterial({
+      map: glowTexture('255,255,235'), transparent: true, opacity: 0.85, depthWrite: false, fog: false
+    }));
+    sunCore.scale.set(3.4, 3.4, 1);
+    sunCore.position.copy(sun.position);
+    scene.add(sunCore);
+
+    var STAR_N = 130;
+    var starGeo = new T.BufferGeometry();
+    var starPos = new Float32Array(STAR_N * 3);
+    for (var st = 0; st < STAR_N; st++) {
+      var sx, sy, sz, sl;
+      do {
+        sx = Math.random() * 2 - 1; sy = Math.random(); sz = Math.random() * 2 - 1;
+        sl = Math.sqrt(sx * sx + sy * sy + sz * sz);
+      } while (sl < 0.28 || sy < 0.16);
+      var sr = 45 + Math.random() * 9;
+      starPos[st * 3] = (sx / sl) * sr;
+      starPos[st * 3 + 1] = (sy / sl) * sr * 0.8 + 3;
+      starPos[st * 3 + 2] = (sz / sl) * sr;
+    }
+    starGeo.setAttribute('position', new T.BufferAttribute(starPos, 3));
+    var starMat = new T.PointsMaterial({
+      color: 0xcfd8ff, size: 0.32, sizeAttenuation: true,
+      transparent: true, opacity: 0.8, depthWrite: false, fog: false
+    });
+    var stars = new T.Points(starGeo, starMat);
+    scene.add(stars);
+
     var halo = new T.Mesh(
       new T.CircleGeometry(9, 40),
-      new T.MeshBasicMaterial({ color: 0x5b6bb5, transparent: true, opacity: 0.10, depthWrite: false, fog: false })
+      new T.MeshBasicMaterial({ color: 0x5b6bb5, transparent: true, opacity: 0.16, depthWrite: false, fog: false })
     );
     halo.rotation.x = -Math.PI / 2;
     halo.position.y = -2.6;
@@ -142,6 +214,22 @@
     });
     scene.add(props);
 
+    /* ---------- floating islands (slow bob, pure scenery) ---------- */
+    var isles = [];
+    [
+      [-8.5, -2.5, -11, 0.9],
+      [7.5, -1.6, -12, 1.1],
+      [0.5, -3.5, -13.5, 1.4]
+    ].forEach(function (p, i) {
+      var il = island(p[3]);
+      il.position.set(p[0], p[1], p[2]);
+      il.rotation.y = i * 2.1;
+      il.userData.baseY = p[1];
+      il.userData.phase = i * 1.9;
+      scene.add(il);
+      isles.push(il);
+    });
+
     /* ---------- platform ---------- */
     var platform = new T.Group();
     platform.position.y = 0;
@@ -156,8 +244,10 @@
     deck.receiveShadow = true;
     platform.add(deck);
 
-    // rim accent ring
-    var rim = new T.Mesh(new T.TorusGeometry(DECK_RX * 0.995, 0.028, 8, 60), mat(0xffce58, 0.42, 0.15));
+    // rim accent ring (emissive so it reads as neon)
+    var rim = new T.Mesh(new T.TorusGeometry(DECK_RX * 0.995, 0.028, 8, 60), new T.MeshStandardMaterial({
+      color: 0xffce58, roughness: 0.42, metalness: 0.15, emissive: 0xffce58, emissiveIntensity: 0.38
+    }));
     rim.rotation.x = Math.PI / 2;
     rim.position.y = SURFACE_Y - 0.012;
     rim.scale.z = DECK_RZ / DECK_RX;
@@ -191,6 +281,17 @@
     pad.rotation.x = Math.PI / 2;
     pad.position.y = SURFACE_Y + 0.002;
     platform.add(pad);
+
+    // soft mint glow pad on the deck top (additive, sits above markings)
+    var padGlowGeo = new T.CircleGeometry(DECK_RX * 0.92, 40);
+    padGlowGeo.scale(1, DECK_RZ / DECK_RX, 1);
+    var padGlow = new T.Mesh(padGlowGeo, new T.MeshBasicMaterial({
+      map: glowTexture('102,227,196'), transparent: true, opacity: 0.42,
+      blending: T.AdditiveBlending, depthWrite: false, fog: false
+    }));
+    padGlow.rotation.x = -Math.PI / 2;
+    padGlow.position.y = SURFACE_Y + 0.004;
+    platform.add(padGlow);
 
     /* ---------- spring (hidden until it is needed) ---------- */
     var spring = new T.Mesh(helixSpring(1.25, 0.30, 6), mat(0x9aa3bd, 0.35, 0.55));
@@ -402,6 +503,13 @@
         /* --- ambient scenery drift --- */
         props.rotation.y = t * 0.008;
         props.position.y = Math.sin(t * 0.35) * 0.08;
+
+        /* --- floating islands bob + star twinkle (cheap, no allocs) --- */
+        for (var ii = 0; ii < isles.length; ii++) {
+          var il = isles[ii];
+          il.position.y = il.userData.baseY + Math.sin(t * 0.28 + il.userData.phase) * 0.18;
+        }
+        starMat.opacity = 0.72 + Math.sin(t * 1.3) * 0.10 + Math.sin(t * 2.7 + 1.4) * 0.08;
       },
 
       /* current kinematics, consumed by the balance solver */
