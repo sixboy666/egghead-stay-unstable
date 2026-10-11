@@ -425,6 +425,9 @@
     var joltX = 0, joltVel = 0;
     var shakeX = 0, shakeY = 0, shakeAmt = 0;
 
+    /* squash & stretch spring (hops stretch, landings squash) */
+    var sqT = 0, sqV = 0;
+
     /* runtime pose output */
     var out = emptyPose();
 
@@ -451,6 +454,14 @@
       },
       joltBody: function (amount) {
         joltVel += amount;
+      },
+      /* cartoon volume squash: p in 0..1 (compress down, widen out) */
+      squash: function (p) {
+        sqT = -0.30 * Math.max(0, Math.min(1, p));
+      },
+      /* cartoon volume stretch: p in 0..1 (stretch up, thin out) */
+      stretch: function (p) {
+        sqT = 0.22 * Math.max(0, Math.min(1, p));
       },
       shake: function (amount) {
         shakeAmt = Math.min(1, shakeAmt + amount);
@@ -635,6 +646,11 @@
         /* subtle yaw twist while sliding around the spinning deck */
         var targetTwist = Math.max(-0.5, Math.min(0.5, -d.slideZ * 0.8));
         parts.bodyPivot.rotation.y += (targetTwist - parts.bodyPivot.rotation.y) * Math.min(1, dt * 4);
+
+        /* squash & stretch spring: over-damped return to rest volume */
+        sqV += (-sqT * 150 - sqV * 13) * dt;
+        sqT += sqV * dt;
+        parts.bodyPivot.scale.set(1 - sqT * 0.5, 1 + sqT, 1 - sqT * 0.5);
       }
     };
 
