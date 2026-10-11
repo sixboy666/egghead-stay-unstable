@@ -86,6 +86,63 @@
   }
 
   /* =========================================================
+     1b. comedy department
+     ========================================================= */
+  var RANKS = [
+    { min: 0, name: 'CRACKED' },
+    { min: 4, name: 'SCRAMBLED' },
+    { min: 9, name: 'SOFT-BOILED' },
+    { min: 14, name: 'SUNNY-SIDE UP' },
+    { min: 19, name: 'HARD-BOILED' },
+    { min: 25, name: 'EGGSECUTIVE MATERIAL' },
+    { min: 33, name: 'YOLK LORD' },
+    { min: 45, name: 'THE UNBREAKABLE OMELET' }
+  ];
+  function rankFor(t) {
+    var r = RANKS[0].name;
+    for (var i = 0; i < RANKS.length; i++) if (t >= RANKS[i].min) r = RANKS[i].name;
+    return r;
+  }
+
+  var EGGSCUSES = [
+    'The fan filed a complaint first.',
+    'Gravity was having a bad day.',
+    'The deck moved. Allegedly.',
+    'Sunglasses obscured the danger.',
+    'A seagull told him it was safe.',
+    'The spring acted alone.',
+    'Centrifugal feelings got involved.',
+    'His stance was avant-garde.',
+    'The floor was clearly jealous.',
+    'Nobody respects physics anymore.',
+    'He was distracted by his own suit.',
+    'The wobble was SCHEDULED.',
+    'Insurance does not cover style.',
+    'The egg-cuse wrote itself.'
+  ];
+
+  var TAGLINES = [
+    'Balance. Vibe. Regret.',
+    'Gravity is taking notes.',
+    'The fans are not sorry.',
+    'Certified wobble physics.',
+    'Sunglasses sold separately.',
+    'Still less drama than Monday.',
+    'The spring has trust issues.',
+    'Stay unstable, stay employed.'
+  ];
+
+  var MILESTONES = {
+    10: '10 SECONDS · OFFICIALLY WOBBLY',
+    15: '15 SECONDS · SUSPICIOUSLY GOOD',
+    20: '20 SECONDS · THE FANS ARE MAD',
+    25: '25 SECONDS · CLAIM YOUR PRIZES',
+    30: '30 SECONDS · SEEK HELP (ADMiration)',
+    40: '40 SECONDS · THIS IS SHOWING OFF',
+    50: '50 SECONDS · STATISTICALLY IMPOSSIBLE'
+  };
+
+  /* =========================================================
      2. constants
      ========================================================= */
   var COM_H = 1.30;           // height of the centre of mass above the feet
@@ -100,6 +157,10 @@
   var WIND_K = 1.15;
   var SAVE_COOLDOWN = 2.6;
   var SAVE_BONUS = 25;
+  var CC_DANGER = 0.74;       // danger meter that counts as "in trouble"
+  var CC_LEAN = 0.92;         // ~53° of lean also counts
+  var CC_COOLDOWN = 1.1;      // anti-farm gap between close-call rewards
+  var SLOW_DUR = 0.55;        // slow-motion window on a close call
   var DECK_RX = window.EggWorld.RX;
   var DECK_RZ = window.EggWorld.RZ;
   var SURFACE_Y = window.EggWorld.SURFACE_Y;
@@ -109,6 +170,8 @@
      ========================================================= */
   var $ = function (id) { return document.getElementById(id); };
   var canvas = $('gl');
+  var appBox = $('app');
+  var IS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
   var el = {
     boot: $('screenBoot'), bootFill: $('bootFill'), bootNote: $('bootNote'),
     menu: $('screenMenu'), pause: $('screenPause'), over: $('screenOver'),
@@ -121,8 +184,10 @@
     saveMeter: $('saveMeter'), saveMeterFill: $('saveMeterFill'),
     menuBestTime: $('menuBestTime'), menuBestScore: $('menuBestScore'),
     menuUnlockCount: $('menuUnlockCount'),
+    brandTag: $('brandTag'),
     pauseTime: $('pauseTime'), pauseScore: $('pauseScore'),
     overTitle: $('overTitle'), overRecord: $('overRecord'),
+    overRank: $('overRank'), overClose: $('overClose'), overExcuse: $('overExcuse'),
     overTime: $('overTime'), overScore: $('overScore'),
     overBestTime: $('overBestTime'), overBestScore: $('overBestScore'),
     overBlunder: $('overBlunder'),
@@ -142,7 +207,8 @@
   var clock = { last: 0, elapsed: 0, frames: 0 };
   var simQuiet = false;   // set while a headless tuning sweep is running
 
-  var camState = { x: 0, y: 2.15, z: 5.0, shake: 0, shakeSeed: 0, dist: 5.0, menuOrbit: 0 };
+  var camState = { x: 0, y: 2.15, z: 5.0, shake: 0, shakeSeed: 0, dist: 5.0, menuOrbit: 0, fovKick: 0 };
+  var slowT = 0;             // remaining slow-motion time (real seconds)
 
   var webglOK = true;
   function initGL() {
@@ -222,7 +288,9 @@
 
   function onResize() {
     if (!renderer) return;
-    var w = window.innerWidth, h = window.innerHeight;
+    // size to the game container so the desktop "phone frame" letterboxes correctly
+    var w = appBox.clientWidth || window.innerWidth;
+    var h = appBox.clientHeight || window.innerHeight;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
@@ -317,7 +385,11 @@
     input: 0,
     inputTarget: 0,
     newRecord: false,
-    startFx: 0
+    startFx: 0,
+    ccArmed: false,            // currently deep in the danger zone
+    ccCombo: 0,                // consecutive close calls this run
+    ccCount: 0,                // total close calls this run
+    ccLastT: -9                // time of the last rewarded close call
   };
 
   function resetRun() {
@@ -331,6 +403,7 @@
     G.fall = null; G.fallTimer = 0;
     G.input = 0; G.inputTarget = 0;
     G.newRecord = false;
+    G.ccArmed = false; G.ccCombo = 0; G.ccCount = 0; G.ccLastT = -9;
 
     world.reset();
     clearFX();
@@ -517,8 +590,10 @@
     char.joltGlasses(-2.2);
     el.dangerTrack.classList.remove('show');
 
-    // FX: sand-bag puff
+    // FX: sand-bag puff + a dramatic yolk splat below
     fxBurst(new T.Vector3(wp.x, wp.y + 0.6, wp.z), 0xffffff, 16);
+    fxBurst(new T.Vector3(wp.x, wp.y + 0.3, wp.z), 0xffb347, 22);
+    fxBurst(new T.Vector3(wp.x, wp.y + 0.5, wp.z), 0xffce58, 14);
   }
 
   function updateFall(dt) {
@@ -585,7 +660,16 @@
     el.overBlunder.textContent = G.lastCause;
     el.overTitle.textContent = G.newRecord ? 'NEW PERSONAL BEST' : 'RUN OVER';
     el.overRecord.classList.toggle('hidden', !G.newRecord);
-    if (G.newRecord) A.sfx('record');
+    el.overRank.textContent = rankFor(t);
+    el.overClose.textContent = 'CLOSE CALLS ×' + G.ccCount;
+    el.overExcuse.textContent = EGGSCUSES[Math.floor(Math.random() * EGGSCUSES.length)];
+    if (G.newRecord) {
+      A.sfx('record');
+      // celebratory confetti above the (now empty) deck
+      fxBurst(new T.Vector3(0, 1.4, 0), 0xffce58, 18);
+      fxBurst(new T.Vector3(0.3, 1.5, 0), 0x9fe8ff, 16);
+      fxBurst(new T.Vector3(-0.3, 1.45, 0), 0xff8f96, 16);
+    }
 
     var nl = nextLocked(save.bestTime);
     if (nl) {
@@ -644,6 +728,26 @@
 
     stepPhysics(dt);
 
+    /* ---- close-call detector: survive the deep end, get paid ---- */
+    var spicy = G.danger > CC_DANGER || Math.abs(G.lean) > CC_LEAN;
+    if (spicy && !G.ccArmed) G.ccArmed = true;
+    if (G.ccArmed && !spicy) {
+      G.ccArmed = false;
+      if (G.time - G.ccLastT > CC_COOLDOWN) {
+        G.ccLastT = G.time;
+        G.ccCount++; G.ccCombo++;
+        var bonus = 40 + G.ccCombo * 15;
+        G.score += bonus;
+        showBadge('CLOSE CALL <b>+' + bonus + '</b>' + (G.ccCombo > 1 ? ' · ×' + G.ccCombo : ''));
+        slowT = SLOW_DUR;
+        camState.fovKick = 4.5;
+        addShake(0.15);
+        A.sfx('save', { pitch: 11 + Math.min(9, G.ccCombo * 2) });
+        fxBurst(new T.Vector3(worldPlatformX() + G.sx, SURFACE_Y + 1.0, G.sz), 0x9fe8ff, 14);
+        if (navigator.vibrate) { try { navigator.vibrate([12, 30, 12]); } catch (e) { } }
+      }
+    }
+
     /* music intensity follows survival time */
     A.setIntensity(Math.min(5, Math.floor(G.time / 9)));
 
@@ -681,6 +785,7 @@
     if (sec !== updateGame._lastSec) {
       updateGame._lastSec = sec;
       if (sec > 0 && sec % 5 === 0) A.sfx('tick');
+      if (MILESTONES[sec] && G.time > save.bestTime) showBadge(MILESTONES[sec]);
     }
   }
 
@@ -770,7 +875,9 @@
     camera.lookAt(camState.x * 0.42 + sx * 0.6, lookY, 0);
 
     /* gentle FOV breathing keeps the frame alive */
-    var fov = 50 + Math.sin(clock.elapsed * 0.31) * 0.7 + camState.shake * 40;
+    camState.fovKick *= Math.pow(0.004, dt);
+    if (camState.fovKick < 0.02) camState.fovKick = 0;
+    var fov = 50 + Math.sin(clock.elapsed * 0.31) * 0.7 + camState.shake * 40 + camState.fovKick;
     if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
   }
 
@@ -1033,11 +1140,13 @@
     if (e.repeat) return;
     keys[e.code] = true;
     if (e.code === 'Space') { A.unlock(); if (G.mode === 'playing') trySave(); e.preventDefault(); }
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'ArrowUp' || e.code === 'ArrowDown') e.preventDefault();
     if (e.code === 'Escape' || e.code === 'KeyP') { if (G.mode === 'playing') pauseRun(); else if (G.mode === 'paused') resumeRun(); }
     if (e.code === 'Enter') {
       if (G.mode === 'menu') startRun();
       else if (G.mode === 'over') startRun();
     }
+    if (e.code === 'KeyR' && (G.mode === 'over' || G.mode === 'playing')) startRun();
     updateKeys();
   });
   window.addEventListener('keyup', function (e) { keys[e.code] = false; updateKeys(); });
@@ -1104,17 +1213,26 @@
 
     if (!webglOK) return;
 
+    /* close-call slow motion: everything sim-side eases to ~0.4x and back */
+    var ts = 1;
+    if (G.mode === 'playing' && slowT > 0) {
+      slowT -= dt;
+      ts = 0.4 + 0.6 * (1 - Math.max(0, slowT) / SLOW_DUR);
+    }
+    var sdt = dt * ts;
+
     var worldTime = (G.mode === 'playing' || G.mode === 'paused') ? G.time : clock.elapsed;
-    if (G.mode !== 'paused') world.update(dt, worldTime);
+    if (G.mode !== 'paused') world.update(G.mode === 'playing' ? sdt : dt, worldTime);
 
     switch (G.mode) {
       case 'boot':
       case 'menu':
       case 'appearance':
         idleCharacter(dt);
+        if (G.mode === 'menu') updateTagline();
         break;
       case 'playing':
-        updateGame(dt);
+        updateGame(sdt);
         break;
       case 'paused':
         break;
@@ -1137,6 +1255,20 @@
     A.update();
 
     renderer.render(scene, camera);
+  }
+
+  /* rotates the menu tagline with a soft crossfade */
+  function updateTagline() {
+    if (updateTagline._next == null) updateTagline._next = clock.elapsed + 4.5;
+    if (clock.elapsed < updateTagline._next) return;
+    updateTagline._next = clock.elapsed + 4.5;
+    var tag = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
+    if (tag === el.brandTag.textContent) return;
+    el.brandTag.classList.add('swap');
+    setTimeout(function () {
+      el.brandTag.textContent = tag;
+      el.brandTag.classList.remove('swap');
+    }, 420);
   }
 
   function idleCharacter(dt) {
@@ -1202,6 +1334,18 @@
     resetRun();
     G.mode = 'boot';
     char.setPose(save.pose, 1);
+
+    /* dual-input setup: hint text + how-to list follow the device */
+    document.body.classList.add(IS_TOUCH ? 'is-touch' : 'is-desktop');
+    el.hint.textContent = IS_TOUCH
+      ? 'DRAG TO SHIFT WEIGHT · TAP TO FLAIL-SAVE'
+      : 'A / D or ← → TO BALANCE · SPACE TO FLAIL';
+
+    /* auto-pause when the tab loses focus (desktop nicety) */
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden && G.mode === 'playing') pauseRun();
+    });
+
     requestAnimationFrame(loop);
   }
 
@@ -1226,6 +1370,8 @@
         best: save.bestTime,
         bestScore: save.bestScore,
         unlocks: Object.keys(save.unlocked || {}).length,
+        closeCalls: G.ccCount,
+        rank: rankFor(G.time),
         errors: window.__eggErrors || []
       };
     },
